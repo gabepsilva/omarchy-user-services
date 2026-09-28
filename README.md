@@ -25,6 +25,10 @@ bring the model back when you're done.
   (`systemctl --user enable/disable`), status, PID, uptime, RAM, VRAM, CPU time
   and tasks refreshed every 2 seconds, and its **live journal** (newest 300
   lines, capped at 64 KiB), with a button to follow it in a terminal.
+- **Coloured logs** in your theme's palette: errors and warnings stand out
+  whether the service sets a journal priority or just prints `WARN`, `ERROR`,
+  `Traceback` or `…Warning`; the service's own ANSI colours are rendered; the
+  timestamp and name are dimmed.
 - Fully keyboard driven, plus IPC for scripts and keybindings.
 
 ## Install
@@ -51,7 +55,8 @@ This removes the widget from the bar and deletes the plugin folder
 Everything below ships with Omarchy; nothing else is installed or downloaded.
 
 - systemd user session: `systemctl`, `journalctl`
-- `bash`, `sh`, `awk`, `find`, `grep`
+- `bash`, `sh`, `awk`, `find`, `grep`, `jq` (an Omarchy dependency; without
+  it logs are shown uncoloured)
 - cgroup v2 at `/sys/fs/cgroup` (the default on Arch/Omarchy) for RAM figures
 - VRAM: the kernel's DRM fdinfo for amdgpu, i915/xe, nouveau and other DRM
   drivers; `nvidia-smi` for the proprietary NVIDIA driver. It is part of

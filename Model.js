@@ -291,3 +291,158 @@ function withUnitValue(map, unit, value) {
   if (value !== undefined) next[unit] = value
   return next
 }
+
+// ---- Coloured logs
+//
+// logs.sh prints "<priority>\t<line>", with the service's own ANSI colour
+// codes kept. These helpers turn that into rich text for the details view:
+// the line's severity picks its base colour, the timestamp/name header is
+// dimmed, and ANSI colours inside the message are rendered with the theme's
+// palette.
+
+// Theme palette from the theme's colors.toml. Named keys (red, bright_red,
+// …) win; older themes that only define color0..color15 fall back to those.
+function parseThemePalette(text) {
+  var values = {}
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var m = /^\s*([A-Za-z0-9_]+)\s*=\s*"(#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?)"/.exec(lines[i])
+    if (m) values[m[1]] = m[2]
+  }
+  var names = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]
+  var palette = {}
+  for (var n = 0; n < 8; n++) {
+    var normal = values[names[n]] || values["color" + n]
+    var bright = values["bright_" + names[n]] || values["color" + (n + 8)] || normal
+    if (normal) palette[n] = normal
+    if (bright) palette[n + 8] = bright
+  }
+  return palette
+}
+
+// error | warning | debug | meta | normal. journald's priority wins when the
+// service set one; most services log everything at 6 (info), so keywords in
+// the text decide otherwise.
+function logSeverity(priority, text) {
+  if (priority === "-") return "meta"
+  var p = Number(priority)
+  if (p <= 3) return "error"
+  if (p === 4) return "warning"
+  if (p === 7) return "debug"
+  var t = String(text || "")
+  if (/\b(ERROR|ERR|FATAL|CRITICAL|CRIT|PANIC|EMERG|ALERT)\b/.test(t)
+      || /Traceback \(most recent call last\)/.test(t)
+      || /\b[A-Z][A-Za-z]*(Error|Exception)\b/.test(t)
+      || /(^|:\s+)(error|fatal)(:|\[)/i.test(t))
+    return "error"
+  if (/\b(WARN|WARNING)\b/.test(t)
+      || /\b[A-Z][A-Za-z]*Warning\b/.test(t)
+      || /(^|:\s+)warning(:|\[)/i.test(t))
+    return "warning"
+  return "normal"
+}
+
+function stripAnsi(text) {
+  return String(text || "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+
+// xterm 256-colour index to a colour; 0..15 come from the theme palette.
+function ansi256(n, palette) {
+  if (n < 16) return palette[n] || null
+  if (n >= 232) {
+    var g = 8 + (n - 232) * 10
+    return rgbHex(g, g, g)
+  }
+  var i = n - 16
+  var steps = [0, 95, 135, 175, 215, 255]
+  return rgbHex(steps[Math.floor(i / 36)], steps[Math.floor(i / 6) % 6], steps[i % 6])
+}
+
+function rgbHex(r, g, b) {
+  function h(v) { var s = Math.max(0, Math.min(255, v | 0)).toString(16); return s.length < 2 ? "0" + s : s }
+  return "#" + h(r) + h(g) + h(b)
+}
+
+// Split text on ANSI SGR sequences into { text, color, bold, dim } runs.
+// Other escape sequences are dropped.
+function ansiRuns(text, palette) {
+  var runs = []
+  var state = { color: null, bold: false, dim: false }
+  var re = /\x1b\[([0-9;?]*)([A-Za-z])/g
+  var last = 0
+  var m
+  var s = String(text || "")
+  function push(t) {
+    if (t !== "") runs.push({ text: t, color: state.color, bold: state.bold, dim: state.dim })
+  }
+  while ((m = re.exec(s)) !== null) {
+    push(s.slice(last, m.index))
+    last = re.lastIndex
+    if (m[2] !== "m") continue
+    var codes = m[1] === "" ? [0] : m[1].split(";").map(Number)
+    for (var i = 0; i < codes.length; i++) {
+      var c = codes[i]
+      if (c === 0) state = { color: null, bold: false, dim: false }
+      else if (c === 1) state.bold = true
+      else if (c === 2) state.dim = true
+      else if (c === 22) { state.bold = false; state.dim = false }
+      else if (c >= 30 && c <= 37) state.color = palette[c - 30] || null
+      else if (c >= 90 && c <= 97) state.color = palette[c - 90 + 8] || null
+      else if (c === 39) state.color = null
+      else if (c === 38 && codes[i + 1] === 5) { state.color = ansi256(codes[i + 2], palette); i += 2 }
+      else if (c === 38 && codes[i + 1] === 2) { state.color = rgbHex(codes[i + 2], codes[i + 3], codes[i + 4]); i += 4 }
+      else if (c === 48) i += codes[i + 1] === 5 ? 2 : (codes[i + 1] === 2 ? 4 : 0)
+    }
+  }
+  push(s.slice(last))
+  return runs
+}
+
+// "Sep 28 03:55:21 python[123]: " (or a continuation line's indent).
+function splitLogHeader(line) {
+  var m = /^([A-Z][a-z]{2} [ 0-9]\d \d\d:\d\d:\d\d [^:]*?: )/.exec(line)
+  if (m) return { head: m[1], body: line.slice(m[1].length) }
+  var indent = /^( +)/.exec(line)
+  if (indent) return { head: indent[1], body: line.slice(indent[1].length) }
+  return { head: "", body: line }
+}
+
+// Rich text for the logs view. `colors` holds foreground, dim, error,
+// warning and the theme `palette` (see parseThemePalette).
+function logsHtml(text, colors) {
+  var palette = colors.palette || {}
+  var base = {
+    error: colors.error, warning: colors.warning, debug: colors.dim,
+    meta: colors.dim, normal: colors.foreground
+  }
+  var out = []
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i]
+    if (line === "") continue
+    var tab = line.indexOf("\t")
+    var priority = tab >= 0 ? line.slice(0, tab) : "6"
+    var content = tab >= 0 ? line.slice(tab + 1) : line
+    var parts = splitLogHeader(content)
+    var severity = logSeverity(priority, stripAnsi(parts.body))
+    var html = parts.head !== "" ? '<span style="color:' + colors.dim + '">' + escapeHtml(parts.head) + "</span>" : ""
+    var runs = ansiRuns(parts.body, palette)
+    for (var r = 0; r < runs.length; r++) {
+      var run = runs[r]
+      var color = run.color || (run.dim ? colors.dim : base[severity])
+      var piece = '<span style="color:' + color + '">' + escapeHtml(run.text) + "</span>"
+      html += run.bold ? "<b>" + piece + "</b>" : piece
+    }
+    out.push(html)
+  }
+  return '<div style="white-space:pre-wrap">' + out.join("<br>") + "</div>"
+}
+
+// Placeholder text ("Loading…") in the same rich-text frame.
+function plainHtml(text, color) {
+  return '<div style="white-space:pre-wrap"><span style="color:' + color + '">' + escapeHtml(text) + "</span></div>"
+}

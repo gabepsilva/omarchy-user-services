@@ -170,3 +170,66 @@ test("withUnitValue sets, removes, and keeps identity when unchanged", () => {
   same(M.withUnitValue(map, "a.service", undefined), { "b.service": 2 })
   same(map, { "a.service": 1, "b.service": 2 })
 })
+
+test("parseThemePalette reads named colours and falls back to colorN", () => {
+  const named = M.parseThemePalette('red = "#c34043"\nbright_red = "#e82424"\ngreen = "#76946a"\nmode = "dark"\n')
+  assert.equal(named[1], "#c34043")
+  assert.equal(named[9], "#e82424")
+  assert.equal(named[2], "#76946a")
+  assert.equal(named[10], "#76946a")  // no bright_green: reuse green
+  const numbered = M.parseThemePalette('color1 = "#aa0000"\ncolor9 = "#ff0000"\n')
+  assert.equal(numbered[1], "#aa0000")
+  assert.equal(numbered[9], "#ff0000")
+  same(M.parseThemePalette(""), {})
+})
+
+test("logSeverity: journald priority first, then keywords", () => {
+  assert.equal(M.logSeverity("3", "all good"), "error")
+  assert.equal(M.logSeverity("4", "all good"), "warning")
+  assert.equal(M.logSeverity("7", "ERROR"), "debug")
+  assert.equal(M.logSeverity("-", "… older log output"), "meta")
+  assert.equal(M.logSeverity("6", "2026-09-27T19:00:49Z  WARN device busy"), "warning")
+  assert.equal(M.logSeverity("6", "2026-09-27T19:00:49Z ERROR boom"), "error")
+  assert.equal(M.logSeverity("6", "Traceback (most recent call last):"), "error")
+  assert.equal(M.logSeverity("6", "ValueError: bad input"), "error")
+  assert.equal(M.logSeverity("6", "_script.py:1491: FutureWarning: deprecated"), "warning")
+  assert.equal(M.logSeverity("6", "error: could not open file"), "error")
+  assert.equal(M.logSeverity("6", "0 errors, 2 warnings found"), "normal")
+  assert.equal(M.logSeverity("6", "Started Kokoro daemon."), "normal")
+})
+
+test("ansiRuns maps SGR codes to theme colours", () => {
+  const palette = { 1: "#red", 2: "#green", 3: "#yellow", 10: "#bgreen" }
+  same(M.ansiRuns("\x1b[2mtime\x1b[0m \x1b[32m INFO\x1b[0m msg", palette), [
+    { text: "time", color: null, bold: false, dim: true },
+    { text: " ", color: null, bold: false, dim: false },
+    { text: " INFO", color: "#green", bold: false, dim: false },
+    { text: " msg", color: null, bold: false, dim: false }
+  ])
+  same(M.ansiRuns("\x1b[1;92mok\x1b[22;39m.", palette), [
+    { text: "ok", color: "#bgreen", bold: true, dim: false },
+    { text: ".", color: null, bold: false, dim: false }
+  ])
+  assert.equal(M.ansiRuns("\x1b[38;2;255;0;16mx", palette)[0].color, "#ff0010")
+  assert.equal(M.ansiRuns("\x1b[38;5;196mx", palette)[0].color, "#ff0000")
+  same(M.ansiRuns("a\x1b[Kb", palette).map((r) => r.text), ["a", "b"])
+  assert.equal(M.stripAnsi("\x1b[33mWARN\x1b[0m x"), "WARN x")
+})
+
+test("logsHtml dims headers, colours by severity, escapes markup", () => {
+  const colors = { foreground: "#fg", dim: "#dim", error: "#err", warning: "#warn", palette: { 2: "#green" } }
+  const html = M.logsHtml(
+    "6\tSep 28 03:55:21 python[12]: <b>hi</b> & ok\n" +
+    "3\tSep 28 03:55:22 python[12]: crashed\n" +
+    "6\t                            continuation\n" +
+    "6\tSep 28 03:55:23 voxtype[9]: \x1b[32m INFO\x1b[0m WARN low disk\n" +
+    "-\t… older log output not shown\n", colors)
+  assert.match(html, /^<div style="white-space:pre-wrap">/)
+  assert.ok(html.includes('<span style="color:#dim">Sep 28 03:55:21 python[12]: </span><span style="color:#fg">&lt;b&gt;hi&lt;/b&gt; &amp; ok</span>'))
+  assert.ok(html.includes('<span style="color:#err">crashed</span>'))
+  assert.ok(html.includes('<span style="color:#dim">                            </span><span style="color:#fg">continuation</span>'))
+  assert.ok(html.includes('<span style="color:#green"> INFO</span><span style="color:#warn"> WARN low disk</span>'))
+  assert.ok(html.includes('<span style="color:#dim">… older log output not shown</span>'))
+  assert.equal(html.split("<br>").length, 5)
+  assert.equal(M.plainHtml("a<b", "#c"), '<div style="white-space:pre-wrap"><span style="color:#c">a&lt;b</span></div>')
+})

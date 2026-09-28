@@ -149,6 +149,18 @@ Panel {
   property string enableState: ""
   property string enableError: ""
   property string logsText: ""
+
+  // Log colours follow the theme: its palette (for ANSI colours and the
+  // warning yellow) is read from the theme's colors.toml, re-read each time
+  // details open so a theme switch is picked up.
+  property var logPalette: ({})
+  readonly property var logColors: ({
+    foreground: String(root.foreground),
+    dim: String(root.dim),
+    error: String(root.urgent),
+    warning: root.logPalette[3] || "#d7a94b",
+    palette: root.logPalette
+  })
   property bool logsLoaded: false
 
   // Memory per running unit for the list, and the full figures for the
@@ -166,6 +178,7 @@ Panel {
 
   function openDetails(unit) {
     if (!unit) return
+    themeColors.reload()
     root.detailsUnit = unit
     root.enableState = ""
     root.enableError = ""
@@ -361,6 +374,14 @@ Panel {
   onTabChanged: clampCursor()
 
   ListModel { id: favModel }
+
+  FileView {
+    id: themeColors
+    path: Color.currentThemePath + "/colors.toml"
+    watchChanges: false
+    printErrors: false
+    onLoaded: root.logPalette = Model.parseThemePalette(text())
+  }
 
   // Fast while the popup is open, slow otherwise so the bar icon still
   // notices a unit falling over.
@@ -1046,12 +1067,17 @@ Panel {
                 width: logsFlick.width
                 readOnly: true
                 selectByMouse: true
-                textFormat: TextEdit.PlainText
+                // Rich text built by Model.logsHtml: severity colours, dimmed
+                // headers, the service's own ANSI colours. Everything from
+                // the journal is HTML-escaped there.
+                textFormat: TextEdit.RichText
                 wrapMode: TextEdit.WrapAnywhere
-                text: root.logsLoaded
-                  ? (root.logsText !== "" ? root.logsText : "No log entries.")
-                  : "Loading…"
-                color: root.logsText !== "" ? root.foreground : root.dim
+                text: !root.logsLoaded
+                  ? Model.plainHtml("Loading…", String(root.dim))
+                  : (root.logsText !== ""
+                    ? Model.logsHtml(root.logsText, root.logColors)
+                    : Model.plainHtml("No log entries.", String(root.dim)))
+                color: root.foreground
                 selectionColor: Style.selectionFillFor(root.foreground, Color.accent)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
