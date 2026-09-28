@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.gabepsilva.user-services",
   "name": "User Services",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Gabriel da Silva",
   "license": "MIT",
   "description": "Start, stop and restart your systemctl --user services from the bar, with the real RAM and VRAM each one holds. Built for people running heavy local services like AI models, inference servers and GPU jobs.",
