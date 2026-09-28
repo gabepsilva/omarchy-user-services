@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.gabepsilva.user-services",
+  "name": "User Services",
+  "version": "0.1.0",
+  "author": "Gabriel da Silva",
+  "license": "MIT",
+  "description": "List systemctl --user services with a switch to start/stop each one and a button to restart it.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "User Services",
+    "description": "Start, stop, and restart systemd user services. The icon turns urgent when a service has failed.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "showInactive": true,
+      "hideAutostart": true,
+      "refreshIntervalSec": 5
+    },
+    "schema": [
+      {
+        "key": "showInactive",
+        "type": "boolean",
+        "label": "Show stopped services",
+        "defaultValue": true,
+        "description": "Off lists only running and failed services."
+      },
+      {
+        "key": "hideAutostart",
+        "type": "boolean",
+        "label": "Hide XDG autostart units",
+        "defaultValue": true,
+        "description": "Hides the generated app-*@autostart.service units."
+      },
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval while open (seconds)",
+        "min": 2,
+        "max": 60,
+        "step": 1,
+        "defaultValue": 5
+      }
+    ]
+  },
+  "repository": "https://github.com/gabepsilva/omarchy-user-services"
+}
