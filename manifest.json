@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.gabepsilva.user-services",
   "name": "User Services",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "author": "Gabriel da Silva",
   "license": "MIT",
-  "description": "List systemctl --user services with a switch to start/stop each one and a button to restart it.",
+  "description": "Start, stop and restart your systemctl --user services from the bar, with the real RAM and VRAM each one holds. Built for people running heavy local services like AI models, inference servers and GPU jobs.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "User Services",
-    "description": "Start, stop, and restart systemd user services. The icon turns urgent when a service has failed.",
+    "description": "Your user services with a start/stop switch, real RAM and VRAM per service, favorites, and a details view with restart, start at login, PID, uptime, CPU and live logs.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",
