@@ -110,6 +110,14 @@ It changes a service only when you click or press a key for it. Stopping
 session plumbing such as `dbus-broker` or `pipewire` will break your desktop
 session until it's restarted, so leave those alone.
 
+## Development
+
+`Model.js` holds the panel's pure logic; its tests need only Node:
+
+```sh
+node --test test/model.test.mjs
+```
+
 ## License
 
 MIT, see [LICENSE](LICENSE).

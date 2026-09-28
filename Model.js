@@ -4,6 +4,13 @@
 // list-units -o json`, filter and sort it. Kept free of QML so it can be
 // exercised from node.
 
+// Lists coming from the QML engine (e.g. shell.json settings) are sequence
+// wrappers: `instanceof Array` is true but Array.isArray is false. Plain
+// arrays from another JS realm (tests) are the reverse. Accept both.
+function isList(value) {
+  return value instanceof Array || Array.isArray(value)
+}
+
 function parseUnits(text) {
   var raw
   try {
@@ -11,7 +18,7 @@ function parseUnits(text) {
   } catch (e) {
     return null
   }
-  if (!(raw instanceof Array)) return null
+  if (!isList(raw)) return null
 
   var units = []
   for (var i = 0; i < raw.length; i++) {
@@ -105,10 +112,13 @@ function countFailed(units) {
   return n
 }
 
-function stateLabel(u) {
-  if (!u) return ""
-  if (u.sub && u.sub !== u.active) return u.active + " · " + u.sub
-  return u.active
+// Status line wording for an action in flight and once it finished.
+function busyLabel(verb) {
+  return { start: "Starting…", stop: "Stopping…", restart: "Restarting…" }[verb] || "Working…"
+}
+
+function doneLabel(verb) {
+  return { start: "Started", stop: "Stopped", restart: "Restarted" }[verb] || "Done"
 }
 
 function elide(text, max) {
@@ -121,7 +131,7 @@ function elide(text, max) {
 
 function normalizeFavorites(value) {
   var out = []
-  if (!(value instanceof Array)) return out
+  if (!isList(value)) return out
   for (var i = 0; i < value.length; i++) {
     var name = String(value[i] || "")
     if (name !== "" && out.indexOf(name) === -1) out.push(name)
@@ -135,14 +145,6 @@ function toggleFavorite(favorites, unit) {
   if (at === -1) list.push(unit)
   else list.splice(at, 1)
   return list
-}
-
-function moveItem(list, from, to) {
-  var out = (list || []).slice()
-  if (from < 0 || from >= out.length || to < 0 || to >= out.length || from === to) return out
-  var item = out.splice(from, 1)[0]
-  out.splice(to, 0, item)
-  return out
 }
 
 function sameList(a, b) {
@@ -277,4 +279,15 @@ function memoryTooltip(ram, vram) {
   if (ram !== undefined) lines.push("RAM:  " + formatBytes(ram))
   if (vram !== undefined) lines.push("VRAM: " + formatBytes(vram))
   return lines.join("\n")
+}
+
+// A copy of `map` with `unit` set to `value` (or removed when undefined).
+// Returns `map` itself when nothing changes, so bindings on it stay quiet.
+function withUnitValue(map, unit, value) {
+  var current = map ? map[unit] : undefined
+  if (current === value) return map
+  var next = {}
+  for (var key in map) if (key !== unit) next[key] = map[key]
+  if (value !== undefined) next[unit] = value
+  return next
 }

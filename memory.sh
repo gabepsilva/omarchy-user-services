@@ -3,8 +3,9 @@
 # service itself holds: anonymous memory + shmem + kernel memory from its
 # cgroup's memory.stat. Page cache (e.g. model weights read from disk) is
 # left out; the kernel drops it whenever something else needs the memory.
+# With a unit name as the first argument, only that unit is reported.
 
-systemctl --user show -p Id,ControlGroup --no-pager -- '*.service' | awk -F= '
+systemctl --user show -p Id,ControlGroup --no-pager -- "${1:-*.service}" | awk -F= '
   function flush() {
     if (id != "" && cg != "") {
       f = "/sys/fs/cgroup" cg "/memory.stat"

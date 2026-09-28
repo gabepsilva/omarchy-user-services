@@ -70,7 +70,9 @@ Panel {
     if (listProcess.running) return
     listProcess.command = ["systemctl", "--user", "list-units", "--type=service", "--all", "--output=json", "--no-pager"]
     listProcess.running = true
-    refreshMemory()
+    // Figures are only shown in the open list; the closed widget only needs
+    // the failed count for its icon. The details view measures its own unit.
+    if (root.opened && !root.detailsOpen) refreshMemory()
   }
 
   // RAM each service actually holds (anon + shmem + kernel, no page cache),
@@ -91,6 +93,21 @@ Panel {
     if (!vramProcess.running) {
       vramProcess.command = ["bash", root.vramScript]
       vramProcess.running = true
+    }
+  }
+
+  // Just the unit whose details are open, merged into the shared maps.
+  function refreshUnitMemory() {
+    if (!detailsOpen) return
+    if (!memUnitProcess.running) {
+      memUnitProcess.unit = detailsUnit
+      memUnitProcess.command = ["sh", root.memoryScript, detailsUnit]
+      memUnitProcess.running = true
+    }
+    if (!vramUnitProcess.running) {
+      vramUnitProcess.unit = detailsUnit
+      vramUnitProcess.command = ["bash", root.vramScript, detailsUnit]
+      vramUnitProcess.running = true
     }
   }
 
@@ -135,6 +152,10 @@ Panel {
   // Memory per running unit for the list, and the full figures for the
   // unit whose details are open.
   property var memoryByUnit: ({})
+  // Last raw outputs, to skip re-publishing identical results.
+  property string _listText: ""
+  property string _memText: ""
+  property string _vramText: ""
   property var vramByUnit: ({})
   property var stats: ({})
   property real nowSec: Date.now() / 1000
@@ -158,6 +179,7 @@ Panel {
 
   function closeDetails() {
     root.detailsUnit = ""
+    if (root.opened) refreshMemory()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -362,11 +384,19 @@ Panel {
         root.loadError = Model.elide(listStderr.text || "systemctl --user list-units failed")
         return
       }
-      var parsed = Model.parseUnits(listStdout.text)
+      // Unchanged output keeps the current array, so the All list's Repeater
+      // does not tear down and rebuild every row on each poll.
+      var text = String(listStdout.text || "")
+      if (root.loaded && text === root._listText) {
+        root.loadError = ""
+        return
+      }
+      var parsed = Model.parseUnits(text)
       if (parsed === null) {
         root.loadError = "Could not parse systemctl output"
         return
       }
+      root._listText = text
       root.loadError = ""
       root.units = parsed
       root.loaded = true
@@ -386,8 +416,7 @@ Panel {
         root.actionStatus = Model.elide(actionStderr.text || (root.busyVerb + " " + name + " failed"))
       } else {
         root.actionFailed = false
-        var done = { start: "Started", stop: "Stopped", restart: "Restarted" }[root.busyVerb] || "Done"
-        root.actionStatus = done + " " + name
+        root.actionStatus = Model.doneLabel(root.busyVerb) + " " + name
         statusTimer.restart()
       }
       root.busyUnit = ""
@@ -405,7 +434,7 @@ Panel {
       root.nowSec = Date.now() / 1000
       root.refreshLogs()
       root.refreshStats()
-      root.refreshMemory()
+      root.refreshUnitMemory()
     }
   }
 
@@ -438,7 +467,22 @@ Panel {
     command: []
     stdout: StdioCollector { id: memStdout; waitForEnd: true }
     onExited: function(exitCode) {
-      if (exitCode === 0) root.memoryByUnit = Model.memoryLines(memStdout.text)
+      if (exitCode === 0 && memStdout.text !== root._memText) {
+        root._memText = memStdout.text
+        root.memoryByUnit = Model.memoryLines(memStdout.text)
+      }
+    }
+  }
+
+  Process {
+    id: memUnitProcess
+    property string unit: ""
+    running: false
+    command: []
+    stdout: StdioCollector { id: memUnitStdout; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode === 0)
+        root.memoryByUnit = Model.withUnitValue(root.memoryByUnit, unit, Model.memoryLines(memUnitStdout.text)[unit])
     }
   }
 
@@ -448,7 +492,22 @@ Panel {
     command: []
     stdout: StdioCollector { id: vramStdout; waitForEnd: true }
     onExited: function(exitCode) {
-      if (exitCode === 0) root.vramByUnit = Model.memoryLines(vramStdout.text)
+      if (exitCode === 0 && vramStdout.text !== root._vramText) {
+        root._vramText = vramStdout.text
+        root.vramByUnit = Model.memoryLines(vramStdout.text)
+      }
+    }
+  }
+
+  Process {
+    id: vramUnitProcess
+    property string unit: ""
+    running: false
+    command: []
+    stdout: StdioCollector { id: vramUnitStdout; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode === 0)
+        root.vramByUnit = Model.withUnitValue(root.vramByUnit, unit, Model.memoryLines(vramUnitStdout.text)[unit])
     }
   }
 
@@ -821,7 +880,7 @@ Panel {
             Layout.fillWidth: true
             visible: text !== ""
             text: root.busyUnit === root.detailsUnit && root.busyUnit !== ""
-              ? ({ start: "Starting…", stop: "Stopping…", restart: "Restarting…" }[root.busyVerb] || "Working…")
+              ? Model.busyLabel(root.busyVerb)
               : root.actionStatus
             color: root.actionFailed && root.busyUnit === "" ? root.urgent : root.dim
             font.family: root.fontFamily
