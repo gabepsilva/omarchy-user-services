@@ -13,8 +13,9 @@ bring the model back when you're done.
 
 ## Features
 
-- **Start/stop switch** on every service, and the bar icon turns urgent when
-  one has failed.
+- **Start/stop switch** on every service, including installed ones systemd
+  has unloaded, and the bar icon turns urgent with the number of failed
+  services beside it.
 - **Real RAM and VRAM per service.** RAM leaves out disk cache (model weights
   read from disk would otherwise double the figure). VRAM works on AMD, Intel
   and NVIDIA with nothing extra to install. Hover the figures for labels.
@@ -111,7 +112,8 @@ Edit through the bar settings, or in the widget's entry in
 
 Only `systemctl --user` and `journalctl --user-unit` for your own user, the
 bundled read-only scripts (`memory.sh`, `vram.sh`, `logs.sh`), and `nvidia-smi`
-if present. It never asks for root or elevated privileges and makes no network
+if present. Each runs under `timeout` (10s for reads, 30s for actions), so a
+hung command can't freeze the widget. It never asks for root or elevated privileges and makes no network
 connections.
 It changes a service only when you click or press a key for it. Stopping
 session plumbing such as `dbus-broker` or `pipewire` will break your desktop

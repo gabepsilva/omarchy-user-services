@@ -233,3 +233,53 @@ test("logsHtml dims headers, colours by severity, escapes markup", () => {
   assert.equal(html.split("<br>").length, 5)
   assert.equal(M.plainHtml("a<b", "#c"), '<div style="white-space:pre-wrap"><span style="color:#c">a&lt;b</span></div>')
 })
+
+test("parseUnitFiles maps unit files to their state", () => {
+  same(M.parseUnitFiles(JSON.stringify([
+    { unit_file: "a.service", state: "enabled", preset: "enabled" },
+    { unit_file: "", state: "disabled" },
+    {}
+  ])), { "a.service": "enabled" })
+  assert.equal(M.parseUnitFiles("not json"), null)
+  assert.equal(M.parseUnitFiles("{}"), null)
+})
+
+test("withInstalledUnits lists unloaded enabled and disabled services as stopped", () => {
+  const loaded = [unit("a.service")]
+  const merged = M.withInstalledUnits(loaded, {
+    "a.service": "enabled",
+    "b.service": "disabled",
+    "c.service": "enabled",
+    "d.service": "static",
+    "e.service": "masked",
+    "tmpl@.service": "disabled"
+  })
+  same(merged, [
+    unit("a.service"),
+    unit("b.service", "inactive", "dead", "not-loaded"),
+    unit("c.service", "inactive", "dead", "not-loaded")
+  ])
+  assert.equal(loaded.length, 1)
+  same(M.withInstalledUnits(null, null), [])
+})
+
+test("unloaded installed units are listed and startable; missing ones are not", () => {
+  const units = M.withInstalledUnits([unit("gone.service", "inactive", "dead", "not-found")],
+    { "b.service": "disabled" })
+  same(Array.from(M.filterUnits(units, { showInactive: true }), (u) => u.unit), ["b.service"])
+  assert.equal(M.isStartable(M.favoriteUnit(M.unitMap(units), "b.service")), true)
+  assert.equal(M.isStartable(M.favoriteUnit(M.unitMap(units), "nope.service")), false)
+  assert.equal(M.isStartable(null), false)
+})
+
+test("commands run under timeout, and its exits read as timeouts", () => {
+  same(M.timed(10, ["systemctl", "--user", "stop", "--", "a.service"]),
+    ["timeout", "--kill-after=2", "10s", "systemctl", "--user", "stop", "--", "a.service"])
+  assert.equal(M.timedOut(124, 0), true)
+  assert.equal(M.timedOut(137, 0), true)
+  assert.equal(M.timedOut(9, 1), true)
+  assert.equal(M.timedOut(1, 0), false)
+  assert.equal(M.timedOut(0, 0), false)
+  assert.equal(M.actionTimeoutText("stop", "kokoro.service"),
+    "Stop kokoro is taking over 30s; systemd is still working on it")
+})

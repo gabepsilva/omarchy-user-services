@@ -69,13 +69,55 @@ function isTransient(u) {
   return /^dbus-:/.test(u.unit)
 }
 
+// A unit systemctl can start: loaded, or installed but unloaded right now
+// (`start` loads it on demand).
+function isStartable(u) {
+  return !!u && (u.load === "loaded" || u.load === "not-loaded")
+}
+
+// `systemctl --user list-unit-files -o json`: unit file name -> state
+// ("enabled", "disabled", "static", …). Null on junk.
+function parseUnitFiles(text) {
+  var raw
+  try {
+    raw = JSON.parse(String(text || "[]"))
+  } catch (e) {
+    return null
+  }
+  if (!isList(raw)) return null
+  var states = {}
+  for (var i = 0; i < raw.length; i++) {
+    var f = raw[i] || {}
+    var name = String(f.unit_file || "")
+    if (name !== "") states[name] = String(f.state || "")
+  }
+  return states
+}
+
+// list-units only returns what systemd has loaded, and a stopped, disabled
+// service nothing refers to gets unloaded: stop one and it would drop off
+// the list, with no way to start it again. Installed services that can be
+// enabled or disabled are added back as stopped rows. Templates
+// ("foo@.service") need an instance name, so they are left out.
+function withInstalledUnits(units, fileStates) {
+  var out = (units || []).slice()
+  var seen = unitMap(out)
+  for (var name in fileStates || {}) {
+    var state = fileStates[name]
+    if (state !== "enabled" && state !== "disabled") continue
+    if (seen[name] || name.indexOf("@.") !== -1) continue
+    out.push({ unit: name, load: "not-loaded", active: "inactive", sub: "dead", description: "" })
+  }
+  return out
+}
+
 function filterUnits(units, options) {
   var opts = options || {}
   var query = String(opts.query || "").trim().toLowerCase()
   var out = []
   for (var i = 0; i < (units || []).length; i++) {
     var u = units[i]
-    if (u.load !== "loaded") continue
+    if (!isStartable(u)) continue
     if (isTransient(u)) continue
     if (opts.hideAutostart && isAutostart(u)) continue
     if (!opts.showInactive && !isRunning(u) && !isFailed(u)) continue
@@ -110,6 +152,32 @@ function countFailed(units) {
   var n = 0
   for (var i = 0; i < (units || []).length; i++) if (isFailed(units[i])) n++
   return n
+}
+
+// ---- Deadlines
+//
+// Every command runs under coreutils `timeout`, so a hung systemctl (say, a
+// stuck user bus) can't leave a Process running forever; each refresh skips
+// while its previous run is still going, so one hang would freeze the list.
+// TERM at the deadline, KILL two seconds later if that wasn't enough.
+var TIMEOUT_SEC = { read: 10, action: 30 }
+
+function timed(seconds, argv) {
+  return ["timeout", "--kill-after=2", seconds + "s"].concat(argv)
+}
+
+// timeout exits 124 after TERM worked. When it has to KILL, it re-raises
+// KILL on itself: 137 from a shell, a crash exit (status 1) with code 9
+// from Quickshell.
+function timedOut(exitCode, exitStatus) {
+  return exitCode === 124 || exitCode === 137 || (exitStatus === 1 && exitCode === 9)
+}
+
+// Killing the systemctl client doesn't cancel the job it queued, so a slow
+// stop (TimeoutStopSec defaults to 90s) carries on without us.
+function actionTimeoutText(verb, unit) {
+  var label = { start: "Start", stop: "Stop", restart: "Restart", enable: "Enable", disable: "Disable" }[verb] || verb
+  return label + " " + displayName(unit) + " is taking over " + TIMEOUT_SEC.action + "s; systemd is still working on it"
 }
 
 // Status line wording for an action in flight and once it finished.
@@ -159,8 +227,9 @@ function unitMap(units) {
   return map
 }
 
-// A favorite whose unit is gone (uninstalled, never loaded) still gets a
-// row so it can be removed or reordered.
+// A favorite whose unit is gone (uninstalled) still gets a row so it can
+// be removed or reordered. Installed but unloaded units are in the map
+// already (see withInstalledUnits) and stay startable.
 function favoriteUnit(map, name) {
   return map[name] || { unit: name, load: "not-found", active: "inactive", sub: "not loaded", description: "" }
 }

@@ -10,7 +10,7 @@ import "Model.js" as Model
 // User services: `systemctl --user` services in a popup, each with a switch
 // to start/stop it and a button to restart it.
 //
-// Two tabs. All lists every loaded service with a filter and a star to mark
+// Two tabs. All lists every installed service with a filter and a star to mark
 // favorites. Favorites lists the starred ones in an order you set by
 // dragging; that order is stored in this widget's shell.json entry.
 //
@@ -23,7 +23,11 @@ Panel {
   manageIpc: false
 
   // ---- State
-  property var units: []
+  // What systemd has loaded, plus unit file states so installed services it
+  // unloaded still get a row (see Model.withInstalledUnits).
+  property var loadedUnits: []
+  property var unitFileStates: ({})
+  readonly property var units: Model.withInstalledUnits(loadedUnits, unitFileStates)
   property bool loaded: false
   property string loadError: ""
   property string query: ""
@@ -68,11 +72,21 @@ Panel {
   // ---- Data
   function refresh() {
     if (listProcess.running) return
-    listProcess.command = ["systemctl", "--user", "list-units", "--type=service", "--all", "--output=json", "--no-pager"]
+    listProcess.command = Model.timed(Model.TIMEOUT_SEC.read,
+      ["systemctl", "--user", "list-units", "--type=service", "--all", "--output=json", "--no-pager"])
     listProcess.running = true
-    // Figures are only shown in the open list; the closed widget only needs
-    // the failed count for its icon. The details view measures its own unit.
+    // Unloaded units and figures are only shown in the open list; the closed
+    // widget only needs the failed count for its icon. The details view
+    // measures its own unit.
+    if (root.opened) refreshUnitFiles()
     if (root.opened && !root.detailsOpen) refreshMemory()
+  }
+
+  function refreshUnitFiles() {
+    if (unitFilesProcess.running) return
+    unitFilesProcess.command = Model.timed(Model.TIMEOUT_SEC.read,
+      ["systemctl", "--user", "list-unit-files", "--type=service", "--output=json", "--no-pager"])
+    unitFilesProcess.running = true
   }
 
   // RAM each service actually holds (anon + shmem + kernel, no page cache),
@@ -89,11 +103,11 @@ Panel {
 
   function refreshMemory() {
     if (!memProcess.running) {
-      memProcess.command = ["sh", root.memoryScript]
+      memProcess.command = Model.timed(Model.TIMEOUT_SEC.read, ["sh", root.memoryScript])
       memProcess.running = true
     }
     if (!vramProcess.running) {
-      vramProcess.command = ["bash", root.vramScript]
+      vramProcess.command = Model.timed(Model.TIMEOUT_SEC.read, ["bash", root.vramScript])
       vramProcess.running = true
     }
   }
@@ -103,21 +117,22 @@ Panel {
     if (!detailsOpen) return
     if (!memUnitProcess.running) {
       memUnitProcess.unit = detailsUnit
-      memUnitProcess.command = ["sh", root.memoryScript, detailsUnit]
+      memUnitProcess.command = Model.timed(Model.TIMEOUT_SEC.read, ["sh", root.memoryScript, detailsUnit])
       memUnitProcess.running = true
     }
     if (!vramUnitProcess.running) {
       vramUnitProcess.unit = detailsUnit
-      vramUnitProcess.command = ["bash", root.vramScript, detailsUnit]
+      vramUnitProcess.command = Model.timed(Model.TIMEOUT_SEC.read, ["bash", root.vramScript, detailsUnit])
       vramUnitProcess.running = true
     }
   }
 
   function refreshStats() {
     if (!detailsOpen || statsProcess.running) return
-    statsProcess.command = ["systemctl", "--user", "show", "--timestamp=unix", "--no-pager",
-      "-p", "MainPID,ActiveEnterTimestamp,TasksCurrent,CPUUsageNSec,NRestarts",
-      "--", detailsUnit]
+    statsProcess.command = Model.timed(Model.TIMEOUT_SEC.read,
+      ["systemctl", "--user", "show", "--timestamp=unix", "--no-pager",
+       "-p", "MainPID,ActiveEnterTimestamp,TasksCurrent,CPUUsageNSec,NRestarts",
+       "--", detailsUnit])
     statsProcess.running = true
   }
 
@@ -128,7 +143,7 @@ Panel {
     root.busyVerb = verb
     root.actionStatus = ""
     root.actionFailed = false
-    actionProcess.command = ["systemctl", "--user", verb, "--", unit]
+    actionProcess.command = Model.timed(Model.TIMEOUT_SEC.action, ["systemctl", "--user", verb, "--", unit])
     actionProcess.running = true
   }
 
@@ -168,6 +183,7 @@ Panel {
   property var memoryByUnit: ({})
   // Last raw outputs, to skip re-publishing identical results.
   property string _listText: ""
+  property string _filesText: ""
   property string _memText: ""
   property string _vramText: ""
   property var vramByUnit: ({})
@@ -200,7 +216,7 @@ Panel {
 
   function refreshEnableState() {
     if (!detailsOpen || enableStateProcess.running) return
-    enableStateProcess.command = ["systemctl", "--user", "is-enabled", "--", detailsUnit]
+    enableStateProcess.command = Model.timed(Model.TIMEOUT_SEC.read, ["systemctl", "--user", "is-enabled", "--", detailsUnit])
     enableStateProcess.running = true
   }
 
@@ -209,8 +225,9 @@ Panel {
     // Flip optimistically so the knob throws on the click; the exit
     // handler re-reads the real state either way.
     root.enableError = ""
-    enableProcess.command = ["systemctl", "--user", on ? "enable" : "disable", "--", detailsUnit]
+    enableProcess.command = Model.timed(Model.TIMEOUT_SEC.action, ["systemctl", "--user", on ? "enable" : "disable", "--", detailsUnit])
     root.enableState = on ? "enabled" : "disabled"
+    enableProcess.verb = on ? "enable" : "disable"
     enableProcess.running = true
   }
 
@@ -218,7 +235,7 @@ Panel {
     if (!detailsOpen || logsProcess.running) return
     // logs.sh caps the output in bytes (not just lines) before it reaches
     // the shell, and marks the cut; see the script.
-    logsProcess.command = ["sh", root.logsScript, detailsUnit, "300", String(root.logsMaxBytes)]
+    logsProcess.command = Model.timed(Model.TIMEOUT_SEC.read, ["sh", root.logsScript, detailsUnit, "300", String(root.logsMaxBytes)])
     logsProcess.running = true
   }
 
@@ -352,7 +369,11 @@ Panel {
     searchField.selectAll()
   }
 
-  implicitWidth: button.implicitWidth
+  // On a horizontal bar the failed badge hangs past the icon's slot, so the
+  // widget widens by that much rather than squeezing it into the padding.
+  implicitWidth: failedBadge.visible && !button.vertical
+    ? Math.max(button.implicitWidth, failedBadge.x + failedBadge.implicitWidth + Style.space(2))
+    : button.implicitWidth
   implicitHeight: button.implicitHeight
 
   Component.onCompleted: {
@@ -404,8 +425,12 @@ Panel {
     command: []
     stdout: StdioCollector { id: listStdout; waitForEnd: true }
     stderr: StdioCollector { id: listStderr; waitForEnd: true }
-    onExited: function(exitCode) {
-      if (exitCode !== 0) {
+    onExited: function(exitCode, exitStatus) {
+      if (Model.timedOut(exitCode, exitStatus)) {
+        root.loadError = "systemctl --user list-units timed out after " + Model.TIMEOUT_SEC.read + "s"
+        return
+      }
+      if (exitCode !== 0 || exitStatus !== 0) {
         root.loadError = Model.elide(listStderr.text || "systemctl --user list-units failed")
         return
       }
@@ -423,8 +448,24 @@ Panel {
       }
       root._listText = text
       root.loadError = ""
-      root.units = parsed
+      root.loadedUnits = parsed
       root.loaded = true
+    }
+  }
+
+  // Best effort: on failure the list just lacks the unloaded services.
+  Process {
+    id: unitFilesProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: unitFilesStdout; waitForEnd: true }
+    onExited: function(exitCode, exitStatus) {
+      var text = String(unitFilesStdout.text || "")
+      if (exitCode !== 0 || exitStatus !== 0 || text === root._filesText) return
+      var states = Model.parseUnitFiles(text)
+      if (states === null) return
+      root._filesText = text
+      root.unitFileStates = states
     }
   }
 
@@ -434,9 +475,12 @@ Panel {
     command: []
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { id: actionStderr; waitForEnd: true }
-    onExited: function(exitCode) {
+    onExited: function(exitCode, exitStatus) {
       var name = Model.displayName(root.busyUnit)
-      if (exitCode !== 0) {
+      if (Model.timedOut(exitCode, exitStatus)) {
+        root.actionFailed = true
+        root.actionStatus = Model.actionTimeoutText(root.busyVerb, root.busyUnit)
+      } else if (exitCode !== 0 || exitStatus !== 0) {
         root.actionFailed = true
         root.actionStatus = Model.elide(actionStderr.text || (root.busyVerb + " " + name + " failed"))
       } else {
@@ -469,19 +513,27 @@ Panel {
     command: []
     stdout: StdioCollector { id: enableStateStdout; waitForEnd: true }
     // is-enabled exits non-zero for "disabled"; the word on stdout is what counts.
-    onExited: function(exitCode) {
+    onExited: function(exitCode, exitStatus) {
+      if (Model.timedOut(exitCode, exitStatus)) {
+        root.enableError = "systemctl --user is-enabled timed out after " + Model.TIMEOUT_SEC.read + "s"
+        return
+      }
       root.enableState = String(enableStateStdout.text || "").trim().split("\n")[0]
     }
   }
 
   Process {
     id: enableProcess
+    property string verb: ""
     running: false
     command: []
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { id: enableStderr; waitForEnd: true }
-    onExited: function(exitCode) {
-      if (exitCode !== 0) root.enableError = Model.elide(enableStderr.text || "Could not change start at login")
+    onExited: function(exitCode, exitStatus) {
+      if (Model.timedOut(exitCode, exitStatus))
+        root.enableError = Model.actionTimeoutText(enableProcess.verb, root.detailsUnit)
+      else if (exitCode !== 0 || exitStatus !== 0)
+        root.enableError = Model.elide(enableStderr.text || "Could not change start at login")
       root.refreshEnableState()
     }
   }
@@ -578,16 +630,44 @@ Panel {
 
   BarIconButton {
     id: button
-    anchors.fill: parent
+    anchors.left: parent.left
+    anchors.top: parent.top
+    anchors.bottom: parent.bottom
+    // Its own slot width, not the widget's: the icon centers in the button,
+    // and it shouldn't shift when the badge appears.
+    width: vertical ? parent.width : implicitWidth
     bar: root.bar
     text: "󰒓"
     active: root.failedCount > 0
     tooltipText: root.failedCount > 0
       ? root.failedCount + " failed user service" + (root.failedCount === 1 ? "" : "s")
       : root.runningCount + " user services running"
-    onPressed: function(b) {
-      if (b === Qt.MiddleButton) root.refresh()
-      else root.toggle()
+    onPressed: function(b) { root.barPressed(b) }
+  }
+
+  function barPressed(b) {
+    if (b === Qt.MiddleButton) root.refresh()
+    else root.toggle()
+  }
+
+  // Failed count as a superscript on the icon's top right.
+  Text {
+    id: failedBadge
+    visible: root.failedCount > 0
+    textFormat: Text.PlainText
+    text: root.failedCount > 99 ? "99+" : String(root.failedCount)
+    color: root.urgent
+    font.family: root.fontFamily
+    font.pixelSize: Math.max(8, Math.round(Style.bar.iconFont * 0.7))
+    font.bold: true
+    x: Math.round(button.width / 2 + Style.bar.iconCanvas / 2 - Style.space(1))
+    y: Math.round(button.height / 2 - Style.bar.iconCanvas / 2 - Style.space(2))
+
+    MouseArea {
+      anchors.fill: parent
+      anchors.margins: -Style.space(2)
+      acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
+      onPressed: function(mouse) { root.barPressed(mouse.button) }
     }
   }
 
@@ -894,7 +974,7 @@ Panel {
               tooltipText: "Restart service (r)"
               foreground: root.foreground
               fontFamily: root.fontFamily
-              enabled: root.busyUnit === "" && root.detailsData !== null && root.detailsData.load === "loaded"
+              enabled: root.busyUnit === "" && Model.isStartable(root.detailsData)
               Layout.alignment: Qt.AlignTop
               onClicked: root.restartUnit(root.detailsData)
             }
@@ -1096,7 +1176,7 @@ Panel {
     property bool showStar: false
     property bool showHandle: false
     readonly property string unitName: unitData ? unitData.unit : ""
-    readonly property bool present: unitData ? unitData.load === "loaded" : false
+    readonly property bool present: Model.isStartable(unitData)
     readonly property bool running: Model.isRunning(unitData)
     readonly property bool failed: Model.isFailed(unitData)
     readonly property bool favorite: root.favorites.indexOf(unitName) !== -1
