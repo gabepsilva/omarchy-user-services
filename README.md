@@ -9,7 +9,7 @@ speech-to-text, OCR or inference servers, GPU jobs), this widget shows the
 few gigabytes of VRAM before a game or a training run with one click, then
 bring the model back when you're done.
 
-![User Services: real RAM and VRAM per service, with a start/stop switch](docs/banner.png)
+![User Services: real RAM and VRAM per service, with a start/stop switch](preview.png)
 
 ## Features
 
