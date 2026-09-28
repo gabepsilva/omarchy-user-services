@@ -23,8 +23,8 @@ bring the model back when you're done.
   add favorites.
 - **Details view** per service: restart, a **Start at login** switch
   (`systemctl --user enable/disable`), status, PID, uptime, RAM, VRAM, CPU time
-  and tasks refreshed every 2 seconds, and its **live journal**, with a button
-  to follow it in a terminal.
+  and tasks refreshed every 2 seconds, and its **live journal** (newest 300
+  lines, capped at 64 KiB), with a button to follow it in a terminal.
 - Fully keyboard driven, plus IPC for scripts and keybindings.
 
 ## Install
@@ -104,8 +104,10 @@ Edit through the bar settings, or in the widget's entry in
 
 ## What it runs
 
-Only `systemctl --user` and `journalctl --user-unit` for your own user, the two
-bundled scripts, and `nvidia-smi` if present. No `sudo`, no network access.
+Only `systemctl --user` and `journalctl --user-unit` for your own user, the
+bundled read-only scripts (`memory.sh`, `vram.sh`, `logs.sh`), and `nvidia-smi`
+if present. It never asks for root or elevated privileges and makes no network
+connections.
 It changes a service only when you click or press a key for it. Stopping
 session plumbing such as `dbus-broker` or `pipewire` will break your desktop
 session until it's restarted, so leave those alone.

@@ -80,6 +80,8 @@ Panel {
   readonly property string memoryScript: scriptPath("memory.sh")
   // GPU memory per service: kernel DRM fdinfo, plus nvidia-smi when present.
   readonly property string vramScript: scriptPath("vram.sh")
+  readonly property string logsScript: scriptPath("logs.sh")
+  readonly property int logsMaxBytes: 65536
 
   function scriptPath(name) {
     return decodeURIComponent(String(Qt.resolvedUrl(name)).replace(/^file:\/\//, ""))
@@ -201,7 +203,9 @@ Panel {
 
   function refreshLogs() {
     if (!detailsOpen || logsProcess.running) return
-    logsProcess.command = ["journalctl", "--user-unit=" + detailsUnit, "-n", "300", "--no-pager", "--no-hostname", "-o", "short"]
+    // logs.sh caps the output in bytes (not just lines) before it reaches
+    // the shell, and marks the cut; see the script.
+    logsProcess.command = ["sh", root.logsScript, detailsUnit, "300", String(root.logsMaxBytes)]
     logsProcess.running = true
   }
 
