@@ -113,7 +113,9 @@ Edit through the bar settings, or in the widget's entry in
 Only `systemctl --user` and `journalctl --user-unit` for your own user, the
 bundled read-only scripts (`memory.sh`, `vram.sh`, `logs.sh`), and `nvidia-smi`
 if present. Each runs under `timeout` (10s for reads, 30s for actions), so a
-hung command can't freeze the widget. It never asks for root or elevated privileges and makes no network
+hung command can't freeze the widget, and under `capped.sh`, which cuts its
+stdout and stderr at 1 MiB before the shell collects them; output over that
+is dropped with an error instead of parsed. It never asks for root or elevated privileges and makes no network
 connections.
 It changes a service only when you click or press a key for it. Stopping
 session plumbing such as `dbus-broker` or `pipewire` will break your desktop

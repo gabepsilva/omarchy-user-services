@@ -173,6 +173,31 @@ function timedOut(exitCode, exitStatus) {
   return exitCode === 124 || exitCode === 137 || (exitStatus === 1 && exitCode === 9)
 }
 
+// ---- Output caps
+//
+// A deadline bounds how long a command runs, not how much it prints, and
+// the panel collects output whole. So every command also runs under
+// capped.sh, which cuts stdout and stderr at OUTPUT_CAP_BYTES before they
+// reach the shell. Output over the cap is dropped, not passed on cut, and
+// exits OVERFLOW_EXIT. 1 MiB is far past a real inventory: systemctl
+// prints about 150 bytes of JSON per service.
+var OUTPUT_CAP_BYTES = 1048576
+var OVERFLOW_EXIT = 90
+
+// argv under both limits: timeout outside, so its kill reaches the whole
+// capped pipeline.
+function bounded(seconds, cappedScript, argv) {
+  return timed(seconds, ["bash", cappedScript, String(OUTPUT_CAP_BYTES)].concat(argv))
+}
+
+function overflowed(exitCode, exitStatus) {
+  return exitStatus === 0 && exitCode === OVERFLOW_EXIT
+}
+
+function overflowText(what) {
+  return what + " printed over " + (OUTPUT_CAP_BYTES / 1048576) + " MiB; not shown"
+}
+
 // Killing the systemctl client doesn't cancel the job it queued, so a slow
 // stop (TimeoutStopSec defaults to 90s) carries on without us.
 function actionTimeoutText(verb, unit) {

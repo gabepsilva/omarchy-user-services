@@ -72,7 +72,7 @@ Panel {
   // ---- Data
   function refresh() {
     if (listProcess.running) return
-    listProcess.command = Model.timed(Model.TIMEOUT_SEC.read,
+    listProcess.command = root.bounded(Model.TIMEOUT_SEC.read,
       ["systemctl", "--user", "list-units", "--type=service", "--all", "--output=json", "--no-pager"])
     listProcess.running = true
     // Unloaded units and figures are only shown in the open list; the closed
@@ -84,7 +84,7 @@ Panel {
 
   function refreshUnitFiles() {
     if (unitFilesProcess.running) return
-    unitFilesProcess.command = Model.timed(Model.TIMEOUT_SEC.read,
+    unitFilesProcess.command = root.bounded(Model.TIMEOUT_SEC.read,
       ["systemctl", "--user", "list-unit-files", "--type=service", "--output=json", "--no-pager"])
     unitFilesProcess.running = true
   }
@@ -96,18 +96,25 @@ Panel {
   readonly property string vramScript: scriptPath("vram.sh")
   readonly property string logsScript: scriptPath("logs.sh")
   readonly property int logsMaxBytes: 65536
+  // Every command runs under this: it bounds output in bytes before the
+  // shell collects it, as timeout bounds time. See Model.bounded.
+  readonly property string cappedScript: scriptPath("capped.sh")
 
   function scriptPath(name) {
     return decodeURIComponent(String(Qt.resolvedUrl(name)).replace(/^file:\/\//, ""))
   }
 
+  function bounded(seconds, argv) {
+    return Model.bounded(seconds, root.cappedScript, argv)
+  }
+
   function refreshMemory() {
     if (!memProcess.running) {
-      memProcess.command = Model.timed(Model.TIMEOUT_SEC.read, ["sh", root.memoryScript])
+      memProcess.command = root.bounded(Model.TIMEOUT_SEC.read, ["sh", root.memoryScript])
       memProcess.running = true
     }
     if (!vramProcess.running) {
-      vramProcess.command = Model.timed(Model.TIMEOUT_SEC.read, ["bash", root.vramScript])
+      vramProcess.command = root.bounded(Model.TIMEOUT_SEC.read, ["bash", root.vramScript])
       vramProcess.running = true
     }
   }
@@ -117,19 +124,19 @@ Panel {
     if (!detailsOpen) return
     if (!memUnitProcess.running) {
       memUnitProcess.unit = detailsUnit
-      memUnitProcess.command = Model.timed(Model.TIMEOUT_SEC.read, ["sh", root.memoryScript, detailsUnit])
+      memUnitProcess.command = root.bounded(Model.TIMEOUT_SEC.read, ["sh", root.memoryScript, detailsUnit])
       memUnitProcess.running = true
     }
     if (!vramUnitProcess.running) {
       vramUnitProcess.unit = detailsUnit
-      vramUnitProcess.command = Model.timed(Model.TIMEOUT_SEC.read, ["bash", root.vramScript, detailsUnit])
+      vramUnitProcess.command = root.bounded(Model.TIMEOUT_SEC.read, ["bash", root.vramScript, detailsUnit])
       vramUnitProcess.running = true
     }
   }
 
   function refreshStats() {
     if (!detailsOpen || statsProcess.running) return
-    statsProcess.command = Model.timed(Model.TIMEOUT_SEC.read,
+    statsProcess.command = root.bounded(Model.TIMEOUT_SEC.read,
       ["systemctl", "--user", "show", "--timestamp=unix", "--no-pager",
        "-p", "MainPID,ActiveEnterTimestamp,TasksCurrent,CPUUsageNSec,NRestarts",
        "--", detailsUnit])
@@ -143,7 +150,7 @@ Panel {
     root.busyVerb = verb
     root.actionStatus = ""
     root.actionFailed = false
-    actionProcess.command = Model.timed(Model.TIMEOUT_SEC.action, ["systemctl", "--user", verb, "--", unit])
+    actionProcess.command = root.bounded(Model.TIMEOUT_SEC.action, ["systemctl", "--user", verb, "--", unit])
     actionProcess.running = true
   }
 
@@ -216,7 +223,7 @@ Panel {
 
   function refreshEnableState() {
     if (!detailsOpen || enableStateProcess.running) return
-    enableStateProcess.command = Model.timed(Model.TIMEOUT_SEC.read, ["systemctl", "--user", "is-enabled", "--", detailsUnit])
+    enableStateProcess.command = root.bounded(Model.TIMEOUT_SEC.read, ["systemctl", "--user", "is-enabled", "--", detailsUnit])
     enableStateProcess.running = true
   }
 
@@ -225,7 +232,7 @@ Panel {
     // Flip optimistically so the knob throws on the click; the exit
     // handler re-reads the real state either way.
     root.enableError = ""
-    enableProcess.command = Model.timed(Model.TIMEOUT_SEC.action, ["systemctl", "--user", on ? "enable" : "disable", "--", detailsUnit])
+    enableProcess.command = root.bounded(Model.TIMEOUT_SEC.action, ["systemctl", "--user", on ? "enable" : "disable", "--", detailsUnit])
     root.enableState = on ? "enabled" : "disabled"
     enableProcess.verb = on ? "enable" : "disable"
     enableProcess.running = true
@@ -235,7 +242,7 @@ Panel {
     if (!detailsOpen || logsProcess.running) return
     // logs.sh caps the output in bytes (not just lines) before it reaches
     // the shell, and marks the cut; see the script.
-    logsProcess.command = Model.timed(Model.TIMEOUT_SEC.read, ["sh", root.logsScript, detailsUnit, "300", String(root.logsMaxBytes)])
+    logsProcess.command = root.bounded(Model.TIMEOUT_SEC.read, ["sh", root.logsScript, detailsUnit, "300", String(root.logsMaxBytes)])
     logsProcess.running = true
   }
 
@@ -430,6 +437,10 @@ Panel {
         root.loadError = "systemctl --user list-units timed out after " + Model.TIMEOUT_SEC.read + "s"
         return
       }
+      if (Model.overflowed(exitCode, exitStatus)) {
+        root.loadError = Model.overflowText("systemctl --user list-units")
+        return
+      }
       if (exitCode !== 0 || exitStatus !== 0) {
         root.loadError = Model.elide(listStderr.text || "systemctl --user list-units failed")
         return
@@ -480,6 +491,9 @@ Panel {
       if (Model.timedOut(exitCode, exitStatus)) {
         root.actionFailed = true
         root.actionStatus = Model.actionTimeoutText(root.busyVerb, root.busyUnit)
+      } else if (Model.overflowed(exitCode, exitStatus)) {
+        root.actionFailed = true
+        root.actionStatus = Model.overflowText("systemctl --user " + root.busyVerb)
       } else if (exitCode !== 0 || exitStatus !== 0) {
         root.actionFailed = true
         root.actionStatus = Model.elide(actionStderr.text || (root.busyVerb + " " + name + " failed"))
@@ -518,6 +532,10 @@ Panel {
         root.enableError = "systemctl --user is-enabled timed out after " + Model.TIMEOUT_SEC.read + "s"
         return
       }
+      if (Model.overflowed(exitCode, exitStatus)) {
+        root.enableError = Model.overflowText("systemctl --user is-enabled")
+        return
+      }
       root.enableState = String(enableStateStdout.text || "").trim().split("\n")[0]
     }
   }
@@ -532,6 +550,8 @@ Panel {
     onExited: function(exitCode, exitStatus) {
       if (Model.timedOut(exitCode, exitStatus))
         root.enableError = Model.actionTimeoutText(enableProcess.verb, root.detailsUnit)
+      else if (Model.overflowed(exitCode, exitStatus))
+        root.enableError = Model.overflowText("systemctl --user " + enableProcess.verb)
       else if (exitCode !== 0 || exitStatus !== 0)
         root.enableError = Model.elide(enableStderr.text || "Could not change start at login")
       root.refreshEnableState()

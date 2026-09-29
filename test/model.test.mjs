@@ -283,3 +283,14 @@ test("commands run under timeout, and its exits read as timeouts", () => {
   assert.equal(M.actionTimeoutText("stop", "kokoro.service"),
     "Stop kokoro is taking over 30s; systemd is still working on it")
 })
+
+test("commands run under an output cap inside the timeout", () => {
+  same(M.bounded(10, "/p/capped.sh", ["systemctl", "--user", "list-units"]),
+    ["timeout", "--kill-after=2", "10s", "bash", "/p/capped.sh", "1048576", "systemctl", "--user", "list-units"])
+  assert.equal(M.overflowed(90, 0), true)
+  assert.equal(M.overflowed(90, 1), false)
+  assert.equal(M.overflowed(0, 0), false)
+  assert.equal(M.overflowed(124, 0), false)
+  assert.equal(M.overflowText("systemctl --user list-units"),
+    "systemctl --user list-units printed over 1 MiB; not shown")
+})
