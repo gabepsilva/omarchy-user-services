@@ -22,7 +22,7 @@ bring the model back when you're done.
 - **Favorites tab** with the services you care about, in the order you drag
   them into. The **All** tab lists every service with a filter and a star to
   add favorites.
-- **Details view** per service: restart, a **Start at login** switch
+- **Details view** per service: a favorite star, restart, a **Start at login** switch
   (`systemctl --user enable/disable`), status, PID, uptime, RAM, VRAM, CPU time
   and tasks refreshed every 2 seconds, and its **live journal** (newest 300
   lines, capped at 64 KiB), with a button to follow it in a terminal.
@@ -72,7 +72,7 @@ Everything below ships with Omarchy; nothing else is installed or downloaded.
 - Keyboard: `j`/`k` or arrows move, `h`/`l` switch tabs, `Enter`/`Space`
   start/stop, `d` details, `r` restart, `s` favorite, `Shift+J`/`Shift+K`
   reorder favorites, `/` filter, `R` refresh, `Esc` close.
-- In the details view: `r` restart, `e` start at login, `f` follow logs in a
+- In the details view: `s` favorite, `r` restart, `e` start at login, `f` follow logs in a
   terminal, `j`/`k` scroll logs, `Esc` back.
 
 IPC:

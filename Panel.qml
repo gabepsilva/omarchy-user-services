@@ -939,6 +939,8 @@ Panel {
               root.setEnabled(!Model.isEnabledState(root.enableState)); event.accepted = true
             } else if (event.text === "r") {
               root.restartUnit(root.detailsData); event.accepted = true
+            } else if (event.text === "s") {
+              root.toggleFavorite({ unit: root.detailsUnit }); event.accepted = true
             } else if (event.text === "f") {
               root.followLogs(); event.accepted = true
             } else if (event.key === Qt.Key_Down || event.text === "j") {
@@ -987,6 +989,17 @@ Panel {
                 font.pixelSize: Style.font.body
                 wrapMode: Text.WordWrap
               }
+            }
+
+            RowIconButton {
+              readonly property bool favorite: root.isFavorite(root.detailsUnit)
+              glyph: favorite ? "󰓎" : "󰓒"
+              tooltipText: favorite ? "Remove from favorites (s)" : "Add to favorites (s)"
+              foreground: favorite ? root.foreground : root.dim
+              hoverColor: root.foreground
+              fontFamily: root.fontFamily
+              Layout.alignment: Qt.AlignTop
+              onClicked: root.toggleFavorite({ unit: root.detailsUnit })
             }
 
             RowIconButton {
